@@ -1,4 +1,5 @@
 import pandas as pd
+import zhplot
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 import xgboost as xgb
@@ -115,7 +116,7 @@ plt.figure(figsize=(10, 6))
 sns.jointplot(x=y_test, y=preds, kind='kde', fill=True, cmap='coolwarm')
 plt.xlabel('实际值')
 plt.ylabel('预测值')
-plt.suptitle('实际值 vs 预测值 散点密度图', y=1.02)
+plt.suptitle('实际值 vs 预测值 散点密度图', y=1)
 plt.tight_layout()
 plt.savefig('actual_vs_predicted_kde.png')
 plt.close()
