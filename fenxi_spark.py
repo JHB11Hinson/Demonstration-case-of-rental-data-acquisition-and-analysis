@@ -1,14 +1,31 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import avg, col, median, when, count, sum as spark_sum, stddev
 import pandas as pd
 from pyecharts.charts import Bar, Boxplot, Line, HeatMap, Funnel
 from pyecharts import options as opts
 from pyecharts.render import make_snapshot
 from snapshot_selenium import snapshot
 
-# 读取CSV文件
-pandas_df = pd.read_csv('extracted_data.csv')
+# 创建SparkSession
+spark = SparkSession.builder \
+    .appName("rent_analyse") \
+    .master("local[*]") \  # 修改为本地模式
+    .getOrCreate()
 
-print("File read successfully")
-print(pandas_df.head())
+try:
+    # 使用pandas读取文件系统中的CSV文件
+    pandas_df = pd.read_csv('extracted_data.csv')
+    
+    # 将pandas DataFrame转换为Spark DataFrame
+    df = spark.createDataFrame(pandas_df)
+
+    print("File read successfully")
+    df.show(truncate=False)
+except Exception as e:
+    print(f"Error reading file: {e}")
+
+# 显示前几行数据
+df.show(5)
 
 # 定义城市和地区映射
 region_mapping = {
@@ -46,44 +63,52 @@ region_mapping = {
 }
 
 # 将城市和地区映射添加到DataFrame
-pandas_df['地区'] = pandas_df['城市'].map(region_mapping).fillna('其他')
+mapping_expr = {k: v for k, v in region_mapping.items()}
+region_df = df.rdd.map(lambda row: (row['城市'], mapping_expr.get(row['城市'], '其他'))).toDF(['城市', '地区'])
+df_with_region = df.join(region_df, on='城市')
 
 # 打印地区分布情况
-print("\n地区分布情况:")
-print(pandas_df['地区'].value_counts())
+df_with_region.groupBy("地区").count().show()
 
 # 计算每个地区的平均月租
-average_price_pd = pandas_df.groupby("地区")["月租"].mean().reset_index()
-average_price_pd.columns = ["地区", "平均月租"]
+average_price_df = df_with_region.groupBy("地区").agg(avg("月租").alias("平均月租"))
 
 # 计算每个地区的中位月租
-median_price_pd = pandas_df.groupby("地区")["月租"].median().reset_index()
-median_price_pd.columns = ["地区", "中位月租"]
+median_price_df = df_with_region.groupBy("地区").agg(median("月租").alias("中位月租"))
 
 # 计算每个地区的平均面积
-average_area_pd = pandas_df.groupby("地区")["面积"].mean().reset_index()
-average_area_pd.columns = ["地区", "平均面积"]
+average_area_df = df_with_region.groupBy("地区").agg(avg("面积").alias("平均面积"))
 
 # 计算每个地区的月租标准差
-stddev_price_pd = pandas_df.groupby("地区")["月租"].std().reset_index()
-stddev_price_pd.columns = ["地区", "月租标准差"]
+stddev_price_df = df_with_region.groupBy("地区").agg(stddev("月租").alias("月租标准差"))
 
 # 修正楼层类型映射
 floor_type_mapping = {1: "低层", 2: "中层", 3: "高层"}
-pandas_df['楼层类型'] = pandas_df['楼层类型'].map(floor_type_mapping).fillna("高层")
+df_with_floor_type = df_with_region.withColumn("楼层类型", when(col("楼层类型") == 1, "低层")
+                                             .when(col("楼层类型") == 2, "中层")
+                                             .otherwise("高层"))
 
 # 检查楼层类型列的唯一值
-distinct_floor_types = pandas_df['楼层类型'].unique()
-print("\nDistinct floor types:", distinct_floor_types)
+distinct_floor_types = df_with_floor_type.select("楼层类型").distinct().collect()
+print("Distinct floor types:", [row['楼层类型'] for row in distinct_floor_types])
 
 # 计算每个楼层类型的平均月租
-average_floor_price_pd = pandas_df.groupby("楼层类型")["月租"].mean().reset_index()
-average_floor_price_pd.columns = ["楼层类型", "平均月租"]
+average_floor_price_df = df_with_floor_type.groupBy("楼层类型").agg(avg("月租").alias("平均月租"))
 
 # 计算各地区1、2、3楼层房数量及其占比
-floor_count_pd = pandas_df[pandas_df['楼层类型'].isin(["低层", "中层", "高层"])].groupby(["地区", "楼层类型"]).size().unstack(fill_value=0)
-total_count_pd = floor_count_pd.sum(axis=1)
-floor_count_percentage_pd = floor_count_pd.div(total_count_pd, axis=0).fillna(0)
+floor_count_df = df_with_floor_type.filter(col('楼层类型').isin(["低层", "中层", "高层"])).groupBy("地区", "楼层类型").agg(count("*").alias("数量"))
+total_count_df = floor_count_df.groupBy("地区").agg(spark_sum("数量").alias("总数"))
+floor_count_joined_df = floor_count_df.join(total_count_df, on='地区')
+floor_count_percentage_df = floor_count_joined_df.withColumn("比例", col("数量") / col("总数")).select("地区", "楼层类型", "比例")
+floor_count_pivot_df = floor_count_percentage_df.groupBy("地区").pivot("楼层类型").sum("比例").na.fill(0)
+floor_count_pd = floor_count_pivot_df.toPandas()
+
+# 将结果转换为Pandas DataFrame以便于后续处理
+average_price_pd = average_price_df.toPandas()
+median_price_pd = median_price_df.toPandas()
+average_area_pd = average_area_df.toPandas()
+stddev_price_pd = stddev_price_df.toPandas()
+average_floor_price_pd = average_floor_price_df.toPandas()
 
 # 对数值进行取整
 average_price_pd["平均月租"] = average_price_pd["平均月租"].round().astype(int)
@@ -96,7 +121,7 @@ average_floor_price_pd["平均月租"] = average_floor_price_pd["平均月租"].
 combined_stats_pd = average_price_pd.merge(median_price_pd, on="地区").merge(stddev_price_pd, on="地区")
 
 # 打印各个分析结果
-print("\n各地区平均月租:")
+print("各地区平均月租:")
 print(average_price_pd)
 print("\n各地区中位月租:")
 print(median_price_pd)
@@ -107,7 +132,7 @@ print(stddev_price_pd)
 print("\n各楼层平均月租:")
 print(average_floor_price_pd)
 print("\n各地区1、2、3楼层房数量及占比:")
-print(floor_count_percentage_pd)
+print(floor_count_pd)
 print("\n各地区综合统计:")
 print(combined_stats_pd)
 
@@ -164,8 +189,8 @@ boxplot_median_price.set_global_opts(
 )
 
 # 各地区1、2、3楼层房数量的占比热力图
-regions = floor_count_percentage_pd.index.tolist()
-floor_counts = floor_count_percentage_pd.values.tolist()
+regions = floor_count_pd.index.tolist()
+floor_counts = floor_count_pd.values.tolist()
 
 heatmap_chart = (
     HeatMap(init_opts=opts.InitOpts(theme='light'))
@@ -221,6 +246,9 @@ make_snapshot(snapshot, line_avg_floor_price.render(), "floor_average_price_line
 make_snapshot(snapshot, heatmap_chart.render(), "floor_count_heatmap.png")
 make_snapshot(snapshot, funnel_chart.render(), "average_rental_funnel.png")
 make_snapshot(snapshot, composite_bar_chart.render(), "composite_rental_stats.png")
+
+# 停止SparkSession
+spark.stop()
 
 
 

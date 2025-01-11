@@ -2,7 +2,7 @@ import pandas as pd
 import re
 
 # 读取Excel文件
-df = pd.read_excel(r'D:\VSProject\pythonproject\bigdata2\zufanglist4.xlsx')
+df = pd.read_excel(r'zufanglist4.xlsx')
 
 # 定义正则表达式模式来提取面积信息
 area_pattern = re.compile(r'(\d+(\.\d+)?)㎡')
@@ -80,7 +80,7 @@ df_extracted = df[columns_to_extract]
 print(df_extracted)
 
 # 保存到新的Excel文件
-save_path = r'D:\VSProject\pythonproject\bigdata2\extracted_data2.xlsx'
+save_path = r'extracted_data.xlsx' #记得转换为csv
 df_extracted.to_excel(save_path, index=False, engine='openpyxl')
 
 print(f"数据已保存到 {save_path}")
