@@ -3,12 +3,12 @@ import xgboost as xgb
 from sklearn.preprocessing import OneHotEncoder
 
 # 加载模型
-model_path = '/home/gaojinpeng/01_CQUProject/12_MMSA-FET/cut/XGBoost/xgboost_gpu_model.json'
+model_path = 'xgboost_gpu_model.json'
 model = xgb.Booster()
 model.load_model(model_path)
 
 # 加载编码器
-data = pd.read_csv('/home/gaojinpeng/01_CQUProject/12_MMSA-FET/cut/XGBoost/extracted_data.csv')
+data = pd.read_csv('extracted_data.csv')
 features = ['城市', '房屋面积', '楼层']
 encoder = OneHotEncoder(sparse_output=False)
 encoder.fit(data[['城市']])
